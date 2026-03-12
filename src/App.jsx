@@ -114,16 +114,7 @@ function App() {
   const [error, setError] = useState('')
 
   const runAnalysis = async (trimmedTicker, lang, scope) => {
-    if (!trimmedTicker) return
-    if (isLoading) return
-
-    const newsApiKey = import.meta.env.VITE_NEWS_API_KEY
-    const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY
-
-    if (!newsApiKey || !geminiApiKey) {
-      setError(STRINGS[lang].apiKeysError)
-      return
-    }
+    if (!trimmedTicker || isLoading) return
 
     setIsLoading(true)
     setError('')
@@ -133,21 +124,12 @@ function App() {
     setSummary('')
 
     try {
-      // 1) Haberleri çek
-      const newsUrl = new URL('https://newsapi.org/v2/everything')
-      newsUrl.searchParams.set('q', trimmedTicker)
-      newsUrl.searchParams.set(
-        'language',
-        scope === 'bist' || lang === 'tr' ? 'tr' : 'en'
+      // 1) Haberleri backend proxy üzerinden çek
+      const newsRes = await fetch(
+        `/api/news?ticker=${encodeURIComponent(
+          trimmedTicker
+        )}&lang=${encodeURIComponent(lang)}&scope=${encodeURIComponent(scope)}`
       )
-      newsUrl.searchParams.set('sortBy', 'publishedAt')
-      newsUrl.searchParams.set('pageSize', '10')
-
-      const newsRes = await fetch(newsUrl.toString(), {
-        headers: {
-          Authorization: `Bearer ${newsApiKey}`,
-        },
-      })
 
       if (!newsRes.ok) {
         throw new Error(STRINGS[lang].newsFetchError)
@@ -172,127 +154,35 @@ function App() {
 
       setNews(articles)
 
-      // 2) Gemini ile duygu analizi yap
+      // 2) Gemini ile duygu analizi – backend proxy
       const headlinesText = articles
         .map((a, index) => `${index + 1}. ${a.title}`)
         .join('\n')
 
-      const prompt =
-        lang === 'tr'
-          ? `
-Sen bir finans haberleri duygu analizi uzmanısın.
-Aşağıdaki hisse senedine ait haber başlıklarını analiz et ve JSON formatında yanıt ver.
+      const sentimentRes = await fetch('/api/sentiment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ticker: trimmedTicker,
+          headlinesText,
+          language: lang,
+        }),
+      })
 
-Hisse: ${trimmedTicker}
-
-Haber Başlıkları:
-${headlinesText}
-
-Yanıt formatı tam olarak şu olsun:
-{
-  "sentiment": "Positive" | "Negative" | "Neutral",
-  "confidence": number, // 0 ile 1 arasında
-  "summary": "Kısa, 2-3 cümlelik Türkçe özet"
-}
-
-Sadece geçerli bir JSON döndür, açıklama ekleme.`
-          : `
-You are an expert in financial news sentiment analysis.
-Analyze the following stock-related news headlines and respond in JSON format.
-
-Ticker: ${trimmedTicker}
-
-Headlines:
-${headlinesText}
-
-Respond exactly in this format:
-{
-  "sentiment": "Positive" | "Negative" | "Neutral",
-  "confidence": number, // between 0 and 1
-  "summary": "Short 2-3 sentence summary in English"
-}
-
-Return only valid JSON, no explanation.`
-
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: prompt }],
-              },
-            ],
-          }),
-        }
-      )
-
-      if (!geminiRes.ok) {
-        let message = 'Duygu analizi sırasında bir hata oluştu.'
-        try {
-          const errBody = await geminiRes.json()
-          if (errBody?.error?.message) {
-            message = `Duygu analizi hatası: ${errBody.error.message}`
-          } else {
-            message = `Duygu analizi hatası (HTTP ${geminiRes.status})`
-          }
-        } catch {
-          message = `Duygu analizi hatası (HTTP ${geminiRes.status})`
-        }
+      if (!sentimentRes.ok) {
+        const errBody = await sentimentRes.json().catch(() => null)
+        const message =
+          errBody?.error || 'Duygu analizi sırasında bir hata oluştu.'
         throw new Error(message)
       }
 
-      const geminiData = await geminiRes.json()
-      const rawText =
-        geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+      const sentimentData = await sentimentRes.json()
 
-      let parsed
-      try {
-        // Model bazen kod bloğu içinde JSON döndürebilir, onları temizle
-        const cleaned = rawText
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim()
-        parsed = JSON.parse(cleaned)
-      } catch {
-        // JSON parse başarısızsa çok basit bir fallback uygula
-        const lower = rawText.toLowerCase()
-        let simpleSentiment = 'Neutral'
-        if (lower.includes('positive') || lower.includes('bullish')) {
-          simpleSentiment = 'Positive'
-        } else if (lower.includes('negative') || lower.includes('bearish')) {
-          simpleSentiment = 'Negative'
-        }
-
-        parsed = {
-          sentiment: simpleSentiment,
-          confidence: 0.5,
-          summary:
-            'Model yanıtı beklendiği gibi yapılandırılamadı, bu nedenle basit bir duygu çıkarımı yapıldı.',
-        }
-      }
-
-      const finalSentiment =
-        parsed.sentiment && SENTIMENT_ORDER.includes(parsed.sentiment)
-          ? parsed.sentiment
-          : mapScoreToSentiment(
-              typeof parsed.confidence === 'number'
-                ? parsed.confidence * (parsed.sentiment === 'Negative' ? -1 : 1)
-                : 0
-            )
-
-      const finalConfidence =
-        typeof parsed.confidence === 'number'
-          ? Math.max(0, Math.min(1, parsed.confidence))
-          : 0.5
-
-      setSentiment(finalSentiment)
-      setConfidence(finalConfidence)
-      setSummary(parsed.summary || '')
+      setSentiment(sentimentData.sentiment)
+      setConfidence(sentimentData.confidence)
+      setSummary(sentimentData.summary || '')
     } catch (err) {
       console.error(err)
       setError(err.message || 'Beklenmeyen bir hata oluştu.')
