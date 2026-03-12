@@ -53,6 +53,8 @@ const STRINGS = {
     confidenceLabel: 'Güven',
     confidenceNote:
       'Not: Farklı dillerde küçük güven yüzdesi farkları normaldir ve haber diline göre değişebilir.',
+    disclaimer:
+      'Bu sitede sunulan bilgiler yatırım tavsiyesi niteliğinde değildir.',
   },
   en: {
     title: 'Stock Sentiment Analyzer',
@@ -93,6 +95,8 @@ const STRINGS = {
     confidenceLabel: 'Confidence',
     confidenceNote:
       'Note: Small differences in confidence between languages are normal and depend on the news language.',
+    disclaimer:
+      'The information provided on this site does not constitute investment advice.',
   },
 }
 
@@ -445,9 +449,8 @@ function App() {
         </section>
       </main>
       <footer className="app-footer">
-        <span>
-          {t.footer}
-        </span>
+        <span>{t.footer}</span>
+        <span>{t.disclaimer}</span>
       </footer>
     </div>
   )
