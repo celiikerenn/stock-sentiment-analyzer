@@ -11,7 +11,7 @@
 
 ## 🚀 Live Demo
 
-> _https://stock-sentiment-analyzer-eight.vercel.app/_
+[View on Vercel](https://stock-sentiment-analyzer-eight.vercel.app/)
 
 ---
 
